@@ -1,83 +1,82 @@
-# Static Parallel GPU BCC
+# Incremental Compact BCC
 
-## Description
-This repository contains the source code for a Static Parallel GPU-accelerated Biconnected Components (BCC) algorithm. It leverages CUDA for efficient parallel computation, making it suitable for large-scale graph analysis.
+GPU incremental biconnected-components (cut-vertex) computation, benchmarked against a CPU
+dynamic baseline (HRBK22) and a static GPU baseline (static-compact-bcc).
 
-## Quick start (CPU baseline + GPU, one binary)
+## Layout
+```
+incremental_dynamic/   GPU incremental BCC (main code): src/, include/, main.cu, Makefile
+baseline/
+  HRBK22_dynamic_bcc/  CPU dynamic BCC baseline (ParlayLib)
+  static-compact-bcc/  Static GPU BCC baseline
+common/                Shared graph reader + batch generator (graph_input.hpp)
+driver/                run_all.cpp: single binary running CPU baseline + GPU on the same input
+datasets/              small_datasets/ (text) and medium_datasets/ (.egr binary CSR)
+Makefile               Top-level build (calls each sub-Makefile)
+run.py                 Build + run everything
+```
+
+## Requirements
+- CUDA Toolkit 11+ (`nvcc`) and an NVIDIA GPU (sm_70 or newer)
+- g++ with C++17
+- Python 3 (for `run.py`)
+
+## Quick start
 ```shell
 python3 run.py datasets/small_datasets/input_100.txt -k 10
 ```
-`run.py` detects the GPU's compute capability (A100 -> sm_80, L40 -> sm_89, ...), runs the top-level
-`make SM=<cc>` (which calls `baseline/HRBK22_dynamic_bcc/Makefile` and `incremental_dynamic/Makefile`), then runs `./run_all`.
-`run_all` reads the graph once, generates the batch once (`common/graph_input.hpp`), and hands the same
-in-memory input to both implementations.
+This will:
+1. detect the GPU's compute capability via `nvidia-smi` (A100 -> 80, L40/L40S -> 89, H100 -> 90, ...),
+2. run `make SM=<cc>` at the top level,
+3. run `./run_all` (CPU baseline + GPU incremental on the same graph and batch),
+4. run `baseline/static-compact-bcc/bin/cuda_bcc` on the same graph.
 
-## Structure
-- baseline/: 	CPU baseline (HRBK22_dynamic_bcc) and the static GPU reference (static-compact-bcc).
-- incremental_dynamic/: 	GPU incremental BCC (src/, include/, obj/, bin/, its own Makefile).
-- common/: 	Shared graph reader and batch generator.
-- driver/: 	Source of ./run_all.
-- datasets/: 	Input graphs.
-- Makefile, run.py: Top-level build and launcher.
-## Dependencies
+`run.py` options:
 
-* CUDA Toolkit (Recommended version: [11 or above])
+| Option        | Meaning                                                   |
+|---------------|-----------------------------------------------------------|
+| `-k N`        | batch size: N random new edges to insert (default 0)      |
+| `-o DIR`      | write GPU result files (cut vertices, BCC labels) to DIR  |
+| `--sm CC`     | skip detection and build for compute capability CC (e.g. `80`) |
+| `--no-build`  | skip `make`, just run                                     |
+| `-j N`        | parallel make jobs (default: all cores)                   |
 
-* A CUDA-capable GPU (Compute Capability 8.0 or higher recommended)
-
-* GNU Compiler Collection (GCC) for compiling C++ code
-
-## Compilation
-- To compile only the GPU code, from `incremental_dynamic/`:
+Pick the GPU with `CUDA_VISIBLE_DEVICES` (the code itself never selects a device):
 ```shell
-make SM=89
-```
-This will compile all necessary components and produce the required executables.
-
-For detailed information on all available build commands and options, you can refer to the help section of the Makefile:
-```shell
-make help
-```
-<!-- Note make opt compiles the optimized version of the code, while make will compile an unoptimized version of the code. -->
-- Cleaning Build
-To clean the build artifacts:
-
-```shell
-make clean
-```
-## Usage
-After compiling, to run the program, you will need to use the command line interface. Here's the basic syntax for executing the program:
-```shell
-incremental_dynamic/bin/cuda_bcc [options]
-```
-### Command Line Arguments
-The program accepts several command-line arguments to control its behavior:
-
-- -i $input: Sets the input file to $input. This is a mandatory argument as the program needs an input file to operate.
-
-- -o $output: Sets the output directory to $output. This is optional. If not specified, the program will use the default output directory output/. The program will save its output files to this directory.
-
-- -a $algo: Chooses the algorithm to run. The available options are:
-  - cv for cut_vertex
-  - ce for cut_edges
-  - ibcc for implicit_bcc
-  - ebcc for explicit_bcc
-  - sbcc for serial-bcc
-
-This is optional. If not specified, the program will run the explicit_bcc algorithm by default.
-- GPU selection: use the `CUDA_VISIBLE_DEVICES` environment variable (e.g. `CUDA_VISIBLE_DEVICES=1`).
-### Example
-```shell
-CUDA_VISIBLE_DEVICES=0 incremental_dynamic/bin/cuda_bcc -i input_file -o output_directory -a algorithm
-```
-### Getting Help
-To view the help message explaining all available command-line arguments, run:
-```shell
-incremental_dynamic/bin/cuda_bcc -help
+CUDA_VISIBLE_DEVICES=1 python3 run.py datasets/medium_datasets/road_usa.egr -k 1000
 ```
 
-## Contributing
-Contributions to this project are welcome. Please follow the standard Git workflow - fork the repository, make your changes, and submit a pull request.
+## Building manually
+```shell
+make SM=89            # ./run_all + static-compact-bcc
+make SM=80 static     # only baseline/static-compact-bcc
+make SM=89 standalone # per-implementation executables (see below)
+make clean            # clean all sub-projects
+```
+`SM` is the compute capability without the dot. Changing it triggers a full rebuild.
+
+## Running manually
+```shell
+./run_all -i datasets/small_datasets/input_100.txt -k 10 [-o output/]
+```
+The graph is read once and the batch (seed 12345, deterministic) is generated once; both
+implementations receive the same in-memory input. Output ends with a summary: CPU and GPU batch
+times, speedup, and whether the cut-vertex counts match.
+
+Standalone executables (after `make standalone`):
+```shell
+incremental_dynamic/bin/cuda_bcc -i <graph> -k <batch> [-o <dir>]
+baseline/HRBK22_dynamic_bcc/main <graph> <batch> [seed]
+baseline/static-compact-bcc/bin/cuda_bcc -i <graph>
+```
+
+## Input formats
+Chosen by file extension:
+- `.txt`, `.edges`, `.eg2`: text; first line `numVertices numDirectedEdges`, then one `u v` per line,
+  with both `(u,v)` and `(v,u)` present.
+- `.egr`, `.bin`, `.csr`: ECL binary CSR (`size_t` #offsets, `size_t` #neighbors, `long` offsets[], `int` neighbors[]).
+
+Start with `datasets/small_datasets/` (e.g. `input_100.txt`, `triangle_cut.txt`) before the medium graphs.
 
 ## License
 Unlicensed
