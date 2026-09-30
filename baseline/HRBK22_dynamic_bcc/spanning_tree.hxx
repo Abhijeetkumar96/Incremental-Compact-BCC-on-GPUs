@@ -1,7 +1,7 @@
 #ifndef SPANNING_TREE_HXX
 #define SPANNING_TREE_HXX
 
-#include "graph.hxx"
+#include "graph_input.hpp"
 
 #include <vector>
 #include <queue>
@@ -18,12 +18,12 @@
 // ============================================================
 
 inline void build_rooted_spanning_tree(
-    const undirected_graph& graph,
+    const GraphInput& graph,
     int root,
     std::vector<int>& parent,
     std::vector<int>& depth)
 {
-    const long n = graph.getNumVertices();
+    const long n = graph.numVert;
 
     if (root < 0 || root >= n) {
         throw std::out_of_range(
@@ -33,8 +33,8 @@ inline void build_rooted_spanning_tree(
     parent.assign(n, -1);
     depth.assign(n, -1);
 
-    const std::vector<long>& off = graph.getOffsets();
-    const std::vector<int>& nbr = graph.getNeighbors();
+    const std::vector<long>& off = graph.offsets;
+    const std::vector<int>& nbr = graph.neighbors;
 
     std::queue<int> q;
 

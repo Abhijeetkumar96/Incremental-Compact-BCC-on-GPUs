@@ -3,22 +3,11 @@
 ## Description
 This repository contains the source code for a Static Parallel GPU-accelerated Biconnected Components (BCC) algorithm. It leverages CUDA for efficient parallel computation, making it suitable for large-scale graph analysis.
 
-## Quick start (CPU baseline + GPU, one binary)
-```shell
-python3 run.py datasets/small_datasets/input_100.txt -k 10
-```
-`run.py` detects the GPU's compute capability (A100 -> sm_80, L40 -> sm_89, ...), runs the top-level
-`make SM=<cc>` (which calls `baseline/HRBK22_dynamic_bcc/Makefile` and `incremental_dynamic/Makefile`), then runs `./run_all`.
-`run_all` reads the graph once, generates the batch once (`common/graph_input.hpp`), and hands the same
-in-memory input to both implementations.
-
 ## Structure
-- baseline/: 	CPU baseline (HRBK22_dynamic_bcc) and the static GPU reference (static-compact-bcc).
-- incremental_dynamic/: 	GPU incremental BCC (src/, include/, obj/, bin/, its own Makefile).
-- common/: 	Shared graph reader and batch generator.
-- driver/: 	Source of ./run_all.
-- datasets/: 	Input graphs.
-- Makefile, run.py: Top-level build and launcher.
+- src/: 	Contains all source .cu and .cpp files.
+- include/: 	Contains all header files.
+- obj/: 	Contains compiled object files.
+- bin/: 	Contains the executables.
 ## Dependencies
 
 * CUDA Toolkit (Recommended version: [11 or above])
@@ -28,9 +17,9 @@ in-memory input to both implementations.
 * GNU Compiler Collection (GCC) for compiling C++ code
 
 ## Compilation
-- To compile only the GPU code, from `incremental_dynamic/`:
+- To compile the project, use the following Makefile command:
 ```shell
-make SM=89
+make all
 ```
 This will compile all necessary components and produce the required executables.
 
@@ -48,7 +37,7 @@ make clean
 ## Usage
 After compiling, to run the program, you will need to use the command line interface. Here's the basic syntax for executing the program:
 ```shell
-incremental_dynamic/bin/cuda_bcc [options]
+bin/cuda_bcc [options]
 ```
 ### Command Line Arguments
 The program accepts several command-line arguments to control its behavior:
@@ -65,15 +54,15 @@ The program accepts several command-line arguments to control its behavior:
   - sbcc for serial-bcc
 
 This is optional. If not specified, the program will run the explicit_bcc algorithm by default.
-- GPU selection: use the `CUDA_VISIBLE_DEVICES` environment variable (e.g. `CUDA_VISIBLE_DEVICES=1`).
+- -d $device: Sets the CUDA device to $device. This is the ID of the CUDA device you want to use. This is optional. If not provided, the program uses the default CUDA device 0.
 ### Example
 ```shell
-CUDA_VISIBLE_DEVICES=0 incremental_dynamic/bin/cuda_bcc -i input_file -o output_directory -a algorithm
+bin/cuda_bcc -i input_file -o output_directory -a algorithm -d cuda_device
 ```
 ### Getting Help
 To view the help message explaining all available command-line arguments, run:
 ```shell
-incremental_dynamic/bin/cuda_bcc -help
+bin/cuda_bcc -help
 ```
 
 ## Contributing

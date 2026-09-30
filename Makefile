@@ -1,93 +1,61 @@
-# _*_Makefile_*_
-# target: dependency
-# 	action
+# Mother Makefile: builds each implementation through its own Makefile, then
+# links them into the single ./run_all driver.
+#
+#   make SM=80      # A100
+#   make SM=89      # L40 / L40S
+#   make SM=90      # H100
+#
+# Prefer `python3 run.py ...`, which detects SM automatically.
 
-NVCCFLAGS := -std=c++17 -arch=sm_89 -Iinclude
-CPPFLAGS := -std=c++17 -Iinclude
+SM ?= 89
 
-OBJDIR := obj
-SRCDIR := src
-INCDIR := include
-BINDIR := bin
+CPU_DIR := baseline/HRBK22_dynamic_bcc
+STATIC_DIR := baseline/static-compact-bcc
+GPU_DIR := incremental_dynamic
+BUILD := build
 
-# Create the obj directory if it doesn't exist
-$(shell mkdir -p $(OBJDIR))
-$(shell mkdir -p $(BINDIR))
+CXX := g++
+CXXFLAGS := -std=c++17 -O3 -Icommon -I$(GPU_DIR)/include -I$(CPU_DIR)
 
-# All object files
-OBJECTS := $(OBJDIR)/main.o $(OBJDIR)/bcc.o $(OBJDIR)/utility.o $(OBJDIR)/graph.o $(OBJDIR)/bfs.o \
-		   $(OBJDIR)/lca.o $(OBJDIR)/cut_vertex.o $(OBJDIR)/cc.o $(OBJDIR)/bcc_memory_utils.o
+CPU_LIB := $(CPU_DIR)/libhrbk22.a
+GPU_LIB := $(GPU_DIR)/obj/libgpubcc.a
 
-# all: cuda_bcc serial_BCC checker
-all: opt-parallel
+TARGET := run_all
 
-cuda_bcc: $(OBJECTS)
-	nvcc $(NVCCFLAGS) $(OBJECTS) -o $(BINDIR)/cuda_bcc
+.PHONY: all cpu gpu static standalone clean help
 
-$(OBJDIR)/main.o: main.cu $(OBJDIR)/bcc.o $(OBJDIR)/graph.o $(OBJDIR)/bcc_memory_utils.o
-	nvcc $(NVCCFLAGS) -c main.cu -o $(OBJDIR)/main.o
+all: $(TARGET) static
 
-$(OBJDIR)/bcc.o: $(SRCDIR)/bcc.cu $(INCDIR)/bcc.cuh $(OBJDIR)/utility.o $(OBJDIR)/graph.o \
-				 $(OBJDIR)/bfs.o $(OBJDIR)/lca.o
-	nvcc $(NVCCFLAGS) -c $(SRCDIR)/bcc.cu -o $(OBJDIR)/bcc.o
+cpu:
+	$(MAKE) -C $(CPU_DIR) lib
 
-$(OBJDIR)/bcc_memory_utils.o: $(SRCDIR)/bcc_memory_utils.cu $(INCDIR)/bcc_memory_utils.cuh
-	nvcc $(NVCCFLAGS) -c $(SRCDIR)/bcc_memory_utils.cu -o $(OBJDIR)/bcc_memory_utils.o
+gpu:
+	$(MAKE) -C $(GPU_DIR) SM=$(SM) opt-lib
 
-$(OBJDIR)/bfs.o: $(SRCDIR)/bfs.cu $(INCDIR)/bfs.cuh
-	nvcc $(NVCCFLAGS) -c $(SRCDIR)/bfs.cu -o $(OBJDIR)/bfs.o
+# Static GPU BCC reference; standalone binary at $(STATIC_DIR)/bin/cuda_bcc.
+static:
+	$(MAKE) -C $(STATIC_DIR) SM=$(SM) opt
 
-$(OBJDIR)/utility.o: $(SRCDIR)/utility.cpp $(INCDIR)/utility.hpp
-	g++ $(CPPFLAGS) -c $(SRCDIR)/utility.cpp -o $(OBJDIR)/utility.o
+$(BUILD)/run_all.o: driver/run_all.cpp common/graph_input.hpp $(GPU_DIR)/include/gpu_bcc_runner.hpp $(CPU_DIR)/hrbk22.hpp
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(OBJDIR)/graph.o: $(INCDIR)/graph.hpp $(SRCDIR)/graph.cpp
-	g++ $(CPPFLAGS) -c $(SRCDIR)/graph.cpp -o $(OBJDIR)/graph.o
+$(TARGET): cpu gpu $(BUILD)/run_all.o
+	nvcc -arch=sm_$(SM) $(BUILD)/run_all.o $(GPU_LIB) $(CPU_LIB) -o $@ -lpthread
 
-$(OBJDIR)/lca.o: $(SRCDIR)/lca.cu $(INCDIR)/lca.cuh $(OBJDIR)/cc.o $(OBJDIR)/cut_vertex.o
-	nvcc $(NVCCFLAGS) -c $(SRCDIR)/lca.cu -o $(OBJDIR)/lca.o
-
-$(OBJDIR)/cc.o: $(SRCDIR)/connected_components.cu $(INCDIR)/connected_components.cuh
-	nvcc $(NVCCFLAGS) -c $(SRCDIR)/connected_components.cu -o $(OBJDIR)/cc.o
-
-$(OBJDIR)/cut_vertex.o: $(SRCDIR)/cut_vertex.cu $(INCDIR)/cut_vertex.cuh
-	nvcc $(NVCCFLAGS) -c $(SRCDIR)/cut_vertex.cu -o $(OBJDIR)/cut_vertex.o
-
-serial_BCC: src/Serial_BCC_v1.cpp
-	g++ -std=c++17 -O3 src/Serial_BCC_v1.cpp -o $(BINDIR)/serial_BCC
-
-checker: implicit_bcc_checker.o explicit_bcc_checker.o
-
-implicit_bcc_checker.o:
-	g++ -std=c++17 -O3 src/checker_v1.cpp -o $(BINDIR)/implicit_bcc_checker
-
-explicit_bcc_checker.o:
-	g++ -std=c++17 -O3 src/explicit_bcc_checker.cpp -o $(BINDIR)/explicit_bcc_checker
+# Individual executables (incremental_dynamic/bin/cuda_bcc and the CPU baseline's ./main).
+standalone:
+	$(MAKE) -C $(CPU_DIR)
+	$(MAKE) -C $(GPU_DIR) SM=$(SM) opt
 
 clean:
-	rm -rf $(OBJDIR)/*.o $(BINDIR)/*
+	$(MAKE) -C $(CPU_DIR) clean
+	$(MAKE) -C $(GPU_DIR) clean
+	$(MAKE) -C $(STATIC_DIR) clean
+	rm -rf $(TARGET) $(BUILD)
 
-# Target to add -O3 optimization flag
-opt: NVCCFLAGS += -O3
-opt: CPPFLAGS += -O3
-opt: cuda_bcc serial_BCC checker
-
-opt-parallel:
-	make opt -j$(nproc)
-
-# Help target for displaying usage information
 help:
-	@echo "Available commands:"
-	@echo "  all          - Compiles the main CUDA program and associated utilities"
-	@echo "  cuda_bcc     - Compiles the CUDA Biconnected Components program"
-	@echo "  checker      - Compiles the implicit BCC checker"
-	@echo "  serial_BCC   - Compiles the serial BCC algorithm implementation"
-	@echo "  opt          - Builds all targets with optimization (-O3)"
-	@echo "  opt-parallel - Builds all targets with optimization (-O3) using Accelerated compilation"
-	@echo "  clean        - Removes all compiled files"
-	@echo "  help         - Shows this help message"
-	@echo ""
-	@echo "Usage:"
-	@echo "  make [command]"
-	@echo "  make opt-parallel - Executes 'make opt -j$$(nproc)' for efficient parallel building"
-
-.PHONY: all opt clean help opt-parallel
+	@echo "make [SM=80|86|89|90]  - build ./run_all (CPU baseline + GPU) and static-compact-bcc"
+	@echo "make static            - build only baseline/static-compact-bcc"
+	@echo "make standalone        - build the per-implementation executables"
+	@echo "make clean             - clean everything"
