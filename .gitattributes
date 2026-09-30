@@ -1,0 +1,2 @@
+./coPapersCiteseer.gsr filter=lfs diff=lfs merge=lfs -text
+*.egr filter=lfs diff=lfs merge=lfs -text
